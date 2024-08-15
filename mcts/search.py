@@ -1,4 +1,5 @@
 import multiprocessing
+import rvg
 import random
 from typing import List
 import time
@@ -359,7 +360,7 @@ def are_objs_at_goal(poses: np.ndarray, goal_poses: np.ndarray) -> np.ndarray:
     return objs_at_goal.flatten().astype(float)
 
 
-def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action: Action, boundary_box, optimal=False):
+def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action: Action, boundary_box, optimal=False, motion_planner='rrt') -> tuple:
     """Check if the goal pose is reachable"""
 
     obj_poly = obj_polys[action.obj_id]
@@ -367,81 +368,81 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
     obstacles = obj_polys[: action.obj_id] + obj_polys[action.obj_id + 1 :]
     rrt_obs_polys = unary_union(obstacles)
     goal_pose = action.goal_pose
-    # rotate and translate the object to the origin
-    rrt_obj_poly = shapely_rotate_translate_with_center(
-        obj_poly, -obj_pose[0], -obj_pose[1], -obj_pose[2], obj_pose[0], obj_pose[1]
-    )
+    if motion_planner == 'rrt':
+        # rotate and translate the object to the origin
+        rrt_obj_poly = shapely_rotate_translate_with_center(
+            obj_poly, -obj_pose[0], -obj_pose[1], -obj_pose[2], obj_pose[0], obj_pose[1]
+        )
 
-    def is_state_valid_rrt_pool(state) -> bool:
-        pose = (state.getX(), state.getY(), state.getYaw())
-        robot_shape = shapely_rotate_translate_with_center(rrt_obj_poly, pose[0], pose[1], pose[2], 0, 0)
+        def is_state_valid_rrt_pool(state) -> bool:
+            pose = (state.getX(), state.getY(), state.getYaw())
+            robot_shape = shapely_rotate_translate_with_center(rrt_obj_poly, pose[0], pose[1], pose[2], 0, 0)
+            if not robot_shape.within(boundary_box):
+                return False
+            if robot_shape.intersects(rrt_obs_polys):
+                return False
+            return True
 
-        if not robot_shape.within(boundary_box):
-            return False
+        space = CustomSE2StateSpace()
+        bounds = ob.RealVectorBounds(2)  # type: ignore
+        bounds.setLow(0, BOUNDARY[0, 0])
+        bounds.setHigh(0, BOUNDARY[0, 1])
+        bounds.setLow(1, BOUNDARY[1, 0])
+        bounds.setHigh(1, BOUNDARY[1, 1])
+        bounds.setLow(2, -math.pi)
+        bounds.setHigh(2, math.pi)
+        space.setBounds(bounds)
 
-        if robot_shape.intersects(rrt_obs_polys):
-            return False
+        rrt_ss = og.SimpleSetup(space)
+        rrt_ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_state_valid_rrt_pool))
+        space.setup()
+        rrt_ss.getSpaceInformation().setStateValidityCheckingResolution(0.01)
 
-        return True
+        # RRTConnect, LazyLBTRRT, InformedRRTstar, SORRTstar
+        planner_fast = og.RRTConnect(rrt_ss.getSpaceInformation())
+        planner_fast.setRange(0.3)
+        planner_fast.setup()
 
-    space = CustomSE2StateSpace()
-    bounds = ob.RealVectorBounds(2)  # type: ignore
-    bounds.setLow(0, BOUNDARY[0, 0])
-    bounds.setHigh(0, BOUNDARY[0, 1])
-    bounds.setLow(1, BOUNDARY[1, 0])
-    bounds.setHigh(1, BOUNDARY[1, 1])
-    bounds.setLow(2, -math.pi)
-    bounds.setHigh(2, math.pi)
-    space.setBounds(bounds)
+        planner_optimal = og.RRTConnect(rrt_ss.getSpaceInformation())
+        planner_optimal.setRange(0.3)
+        planner_optimal.setup()
 
-    rrt_ss = og.SimpleSetup(space)
-    rrt_ss.setStateValidityChecker(ob.StateValidityCheckerFn(is_state_valid_rrt_pool))
-    space.setup()
-    rrt_ss.getSpaceInformation().setStateValidityCheckingResolution(0.01)
-
-    # RRTConnect, LazyLBTRRT, InformedRRTstar, SORRTstar
-    planner_fast = og.RRTConnect(rrt_ss.getSpaceInformation())
-    planner_fast.setRange(0.3)
-    planner_fast.setup()
-
-    planner_optimal = og.RRTConnect(rrt_ss.getSpaceInformation())
-    planner_optimal.setRange(0.3)
-    planner_optimal.setup()
-
-    start = ob.State(rrt_ss.getStateSpace())
-    start().setX(obj_pose[0])
-    start().setY(obj_pose[1])
-    start().setYaw(obj_pose[2])
-    goal = ob.State(rrt_ss.getStateSpace())
-    goal().setX(goal_pose[0])
-    goal().setY(goal_pose[1])
-    goal().setYaw(goal_pose[2])
-    rrt_ss.setStartAndGoalStates(start, goal)
-    assert is_state_valid_rrt_pool(start()), obj_poses
-    assert is_state_valid_rrt_pool(goal()), (obj_poses, goal_pose)
-    if not optimal:
-        rrt_ss.setPlanner(planner_fast)
-    else:
-        rrt_ss.setPlanner(planner_optimal)
-
-    if not optimal:
-        rrt_ss.solve(0.1)
-
-        if rrt_ss.haveExactSolutionPath():
-            path = rrt_ss.getSolutionPath()
-            cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
-            return True, cost, path
+        start = ob.State(rrt_ss.getStateSpace())
+        start().setX(obj_pose[0])
+        start().setY(obj_pose[1])
+        start().setYaw(obj_pose[2])
+        goal = ob.State(rrt_ss.getStateSpace())
+        goal().setX(goal_pose[0])
+        goal().setY(goal_pose[1])
+        goal().setYaw(goal_pose[2])
+        rrt_ss.setStartAndGoalStates(start, goal)
+        assert is_state_valid_rrt_pool(start()), obj_poses
+        assert is_state_valid_rrt_pool(goal()), (obj_poses, goal_pose)
+        if not optimal:
+            rrt_ss.setPlanner(planner_fast)
         else:
-            return False, None, None
-    else:
-        rrt_ss.solve(0.3)
-        
-        if rrt_ss.haveExactSolutionPath():
-            path = rrt_ss.getSolutionPath()
-            cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
-            return True, cost, path
+            rrt_ss.setPlanner(planner_optimal)
+
+        if not optimal:
+            rrt_ss.solve(0.1)
+
+            if rrt_ss.haveExactSolutionPath():
+                path = rrt_ss.getSolutionPath()
+                cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
+                return True, cost, path
+            else:
+                return False, None, None
         else:
-            return False, None, None
+            rrt_ss.solve(0.3)
+            
+            if rrt_ss.haveExactSolutionPath():
+                path = rrt_ss.getSolutionPath()
+                cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
+                return True, cost, path
+            else:
+                return False, None, None
+    else:
+        raise ValueError(f"Motion planner {motion_planner} not supported")
 
 
 def simulate_pool(
@@ -625,9 +626,10 @@ def simulate_pool(
 
 
 class MCTS:
-    def __init__(self, time_limit: float, pool=None) -> None:
+    def __init__(self, time_limit: float, motion_planner='rrt', pool=None) -> None:
         self.time_limit = time_limit
         self.pool = pool
+        self.motion_planner = motion_planner
         if self.pool:
             self.num_processes = self.pool._processes
         self.np_rng = np.random.default_rng(seed=42)
@@ -637,7 +639,12 @@ class MCTS:
 
         self.boundary_box = box(BOUNDARY[0, 0], BOUNDARY[1, 0], BOUNDARY[0, 1], BOUNDARY[1, 1])
 
-        self.init_rrt()
+        if self.motion_planner == 'rrt':
+            self.init_rrt()
+        elif self.motion_planner == 'rvg':
+            pass
+        else:
+            raise ValueError(f"Motion planner {self.motion_planner} not supported")
 
     def search(
         self,

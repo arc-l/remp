@@ -457,12 +457,14 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--method", action="store", choices=["mcts", "greedy"], help="search method to use")
+    parser.add_argument("--motion_planning", action="store", choices=["rrt", "rvg"], default='rrt', help="search method to use")
     parser.add_argument("--case", action="store", required=True, type=str, help="case to run")
     parser.add_argument("--log", action="store", required=False, type=str, help="where to log")
     parser.add_argument("--gui", action="store_true", required=False, help="show gui")
     args = parser.parse_args()
     search_method = args.method
     case_name = args.case
+    motion_planning = args.motion_planning
     if args.gui:
         gui = True
     else:
