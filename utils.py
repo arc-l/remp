@@ -2,6 +2,7 @@ import math
 from typing import List
 import os
 
+import rvg
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -332,3 +333,12 @@ def smoothen_sharp_corners(polygon, angle_threshold=45):
             smoothed_polygon.append(p1)
 
     return np.array(smoothed_polygon, dtype=polygon.dtype).reshape((-1, 1, 2))
+
+def shapely_polygon_to_rvg_polygon(polygon: Polygon):
+    x, y = polygon.exterior.xy
+    rvg_polygon = [
+        rvg.vertex(x[i], y[i])
+        for i in range(len(x)-1)
+    ]
+    rvg_polygon = rvg.polygon(rvg_polygon, False)
+    return rvg_polygon

@@ -473,9 +473,9 @@ if __name__ == "__main__":
 
     if search_method == "mcts":
         pool = multiprocessing.Pool(processes=multiprocessing.cpu_count() - 1)
-        print(f"case {case_name}, multiprocessing {pool._processes} processes are used!")
+        print(f"case {case_name}, multiprocessing {pool._processes} processes are used! Using motion planner {motion_planning}")
         atexit.register(partial(clean_pool, pool))
-        solver = MCTS(40, pool)
+        solver = MCTS(40, pool, motion_planner=motion_planning)
     elif search_method == "greedy":
         solver = Greedy_Solver()
 
@@ -548,9 +548,13 @@ if __name__ == "__main__":
             solved, cost, path = solver.solve_drag_rrt(obj_polys, obj_start_poses, action, optimal=True)
             e_t = time.time()
             assert solved
-            rrt_poses = []
-            for state in path.getStates():
-                rrt_poses.append((state.getX(), state.getY(), state.getYaw()))
+            poses = []
+            if motion_planning == "rvg":
+                for state in path:
+                    poses.append((state.getX(), state.getY(), state.getTheta()))
+            elif motion_planning == "rrt":
+                for state in path.getStates():
+                    poses.append((state.getX(), state.getY(), state.getYaw()))
             ori_poly = shapely_rotate_translate_with_center(
                 obj_polys[obj_id],
                 -obj_start_poses[obj_id][0],
@@ -559,12 +563,12 @@ if __name__ == "__main__":
                 obj_start_poses[obj_id][0],
                 obj_start_poses[obj_id][1],
             )
-            plot_polygons_with_drag(obj_polys, ori_poly, rrt_poses, f"logs/step-{step}")
+            plot_polygons_with_drag(obj_polys, ori_poly, poses, f"logs/step-{step}")
             obj_polys[obj_id] = shapely_rotate_translate_with_center(
                 obj_polys[obj_id], xoff, yoff, angle, obj_start_poses[obj_id][0], obj_start_poses[obj_id][1]
             )
             obj_start_poses[obj_id] = [action.goal_pose[0], action.goal_pose[1], action.goal_pose[2]]
-            act = [action.type, obj_id, rrt_poses]
+            act = [action.type, obj_id, poses]
             actions.append(act)
         planning_time += (e_t - s_t)
 

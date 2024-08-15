@@ -1,5 +1,6 @@
 import multiprocessing
 import rvg
+import matplotlib.pyplot as plt
 import random
 from typing import List
 import time
@@ -19,7 +20,7 @@ ompl.util.setLogLevel(ompl.util.LogLevel.LOG_WARN)  # type: ignore
 
 from mcts.node import Node, Action
 from constants import *
-from utils import shapely_collision_check, CustomSE2StateSpace, shapely_rotate_translate_with_center, compute_long_axis_radius
+from utils import shapely_collision_check, CustomSE2StateSpace, shapely_rotate_translate_with_center, compute_long_axis_radius, shapely_polygon_to_rvg_polygon
 
 import signal
 def handler(signum, frame):
@@ -368,11 +369,12 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
     obstacles = obj_polys[: action.obj_id] + obj_polys[action.obj_id + 1 :]
     rrt_obs_polys = unary_union(obstacles)
     goal_pose = action.goal_pose
+    # rotate and translate the object to the origin
+    rrt_obj_poly = shapely_rotate_translate_with_center(
+        obj_poly, -obj_pose[0], -obj_pose[1], -obj_pose[2], obj_pose[0], obj_pose[1]
+    )
+
     if motion_planner == 'rrt':
-        # rotate and translate the object to the origin
-        rrt_obj_poly = shapely_rotate_translate_with_center(
-            obj_poly, -obj_pose[0], -obj_pose[1], -obj_pose[2], obj_pose[0], obj_pose[1]
-        )
 
         def is_state_valid_rrt_pool(state) -> bool:
             pose = (state.getX(), state.getY(), state.getYaw())
@@ -442,7 +444,26 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
             else:
                 return False, None, None
     else:
-        raise ValueError(f"Motion planner {motion_planner} not supported")
+        obj = shapely_polygon_to_rvg_polygon(rrt_obj_poly)
+        boundary = rvg.polygon([
+            rvg.vertex(BOUNDARY[0, 0], BOUNDARY[1, 0]),
+            rvg.vertex(BOUNDARY[0, 1], BOUNDARY[1, 0]),
+            rvg.vertex(BOUNDARY[0, 1], BOUNDARY[1, 1]),
+            rvg.vertex(BOUNDARY[0, 0], BOUNDARY[1, 1]),
+            ], False)
+        obstacles = [
+            shapely_polygon_to_rvg_polygon(obs)
+            for obs in obstacles
+        ]
+        start = rvg.vertex(obj_pose[0], obj_pose[1], 0, 2 * np.pi, obj_pose[2], 2 * np.pi, True)
+        goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
+        vg = rvg.visibility_graph(obj, boundary, obstacles, 18, True, True, True, False)
+        path = vg.shortestPath(start, goal)
+        if len(path) == 0:
+            return False, None, None
+        else:
+            cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * vg.getPathLength() 
+            return True, cost, path
 
 
 def simulate_pool(
@@ -466,6 +487,7 @@ def simulate_pool(
     grid_sample_half: bool,
     max_depth: int,
     max_rollout_steps: int,
+    motion_planner: str='rrt',
 ) -> float:
     """Simulate the environment and return the reward"""
 
@@ -519,7 +541,7 @@ def simulate_pool(
                             is_valid_action = True
                         else:
                             solved, cost, path = solve_drag_rrt_pool(
-                                obj_polys, obj_poses, Action(action_type, obj_id, action_goal_pose), boundary_box
+                                obj_polys, obj_poses, Action(action_type, obj_id, action_goal_pose), boundary_box, motion_planner=motion_planner
                             )
                             if solved:
                                 is_valid_action = True
@@ -579,7 +601,7 @@ def simulate_pool(
                         is_valid_action = True
                     else:
                         solved, cost, path = solve_drag_rrt_pool(
-                            obj_polys, obj_poses, Action(action_type, obj_id, action_goal_pose), boundary_box
+                            obj_polys, obj_poses, Action(action_type, obj_id, action_goal_pose), boundary_box, motion_planner=motion_planner
                         )
                         if solved:
                             is_valid_action = True
@@ -626,7 +648,7 @@ def simulate_pool(
 
 
 class MCTS:
-    def __init__(self, time_limit: float, motion_planner='rrt', pool=None) -> None:
+    def __init__(self, time_limit: float, pool=None, motion_planner='rrt') -> None:
         self.time_limit = time_limit
         self.pool = pool
         self.motion_planner = motion_planner
@@ -767,6 +789,7 @@ class MCTS:
                             self.grid_sample_half,
                             self.max_depth,
                             self.max_rollout_steps,
+                            self.motion_planner
                         ),
                     )
                     pool_results.append((result, node))
@@ -1178,80 +1201,106 @@ class MCTS:
             obj_poly, -obj_pose[0], -obj_pose[1], -obj_pose[2], obj_pose[0], obj_pose[1]
         )
 
-        self.rrt_ss.clear()
-        start = ob.State(self.rrt_ss.getStateSpace())
-        start().setX(obj_pose[0])
-        start().setY(obj_pose[1])
-        start().setYaw(obj_pose[2])
-        goal = ob.State(self.rrt_ss.getStateSpace())
-        goal().setX(goal_pose[0])
-        goal().setY(goal_pose[1])
-        goal().setYaw(goal_pose[2])
-        self.rrt_ss.setStartAndGoalStates(start, goal)
-        if not optimal:
-            self.rrt_ss.setPlanner(self.planner_fast)
-        else:
-            self.rrt_ss.setPlanner(self.planner_optimal)
-
-        if not optimal:
-            try:
-                # signal.alarm(1)
-                self.rrt_ss.solve(0.2)
-                # signal.alarm(0)
-            except TimeoutError:
-                print("timeout, try again")
-                self.rrt_ss.clear()
-            # finally:
-            #     signal.alarm(0)
-            if self.rrt_ss.haveExactSolutionPath():
-                path = self.rrt_ss.getSolutionPath()
-                cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
-                return True, cost, path
+        if self.motion_planner == 'rrt':
+            self.rrt_ss.clear()
+            start = ob.State(self.rrt_ss.getStateSpace())
+            start().setX(obj_pose[0])
+            start().setY(obj_pose[1])
+            start().setYaw(obj_pose[2])
+            goal = ob.State(self.rrt_ss.getStateSpace())
+            goal().setX(goal_pose[0])
+            goal().setY(goal_pose[1])
+            goal().setYaw(goal_pose[2])
+            self.rrt_ss.setStartAndGoalStates(start, goal)
+            if not optimal:
+                self.rrt_ss.setPlanner(self.planner_fast)
             else:
-                return False, None, None
-        else:
-            t = 2
-            count = 0
-            while True:
+                self.rrt_ss.setPlanner(self.planner_optimal)
+
+            if not optimal:
                 try:
-                    signal.alarm(t)
-                    self.rrt_ss.solve(t - 0.1)
-                    signal.alarm(0)
-                    if self.rrt_ss.haveExactSolutionPath():
-                        break
-                    else:
-                        t = 3
-                        print("no exact solution, try again")
-                        self.rrt_ss.clear()
+                    # signal.alarm(1)
+                    self.rrt_ss.solve(0.2)
+                    # signal.alarm(0)
                 except TimeoutError:
-                    t = 3
                     print("timeout, try again")
                     self.rrt_ss.clear()
-                finally:
-                    signal.alarm(0)
-                count += 1
-                if count > 3:
-                    print('switch to fast planner')
-                    self.rrt_ss.setPlanner(self.planner_fast)
-
-            # ns = self.rrt_ss.getProblemDefinition().getSolutionCount()
-            # print("Found %d solutions" % ns)
-            signal.alarm(t)
-            if self.rrt_ss.haveExactSolutionPath():
-                path = self.rrt_ss.getSolutionPath()
-                ps = og.PathSimplifier(self.rrt_ss.getSpaceInformation())
-                ps.simplifyMax(path)
-                if len(path.getStates()) > 2:
-                    ps.smoothBSpline(path, 2)
+                # finally:
+                #     signal.alarm(0)
+                if self.rrt_ss.haveExactSolutionPath():
+                    path = self.rrt_ss.getSolutionPath()
+                    cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
+                    return True, cost, path
                 else:
-                    path.interpolate(int(path.length() / 0.1))
-                    # ps.smoothBSpline(path, 4)
-                cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
-                signal.alarm(0)
-                return True, cost, path
+                    return False, None, None
             else:
-                signal.alarm(0)
+                t = 2
+                count = 0
+                while True:
+                    try:
+                        signal.alarm(t)
+                        self.rrt_ss.solve(t - 0.1)
+                        signal.alarm(0)
+                        if self.rrt_ss.haveExactSolutionPath():
+                            break
+                        else:
+                            t = 3
+                            print("no exact solution, try again")
+                            self.rrt_ss.clear()
+                    except TimeoutError:
+                        t = 3
+                        print("timeout, try again")
+                        self.rrt_ss.clear()
+                    finally:
+                        signal.alarm(0)
+                    count += 1
+                    if count > 3:
+                        print('switch to fast planner')
+                        self.rrt_ss.setPlanner(self.planner_fast)
+
+                # ns = self.rrt_ss.getProblemDefinition().getSolutionCount()
+                # print("Found %d solutions" % ns)
+                signal.alarm(t)
+                if self.rrt_ss.haveExactSolutionPath():
+                    path = self.rrt_ss.getSolutionPath()
+                    ps = og.PathSimplifier(self.rrt_ss.getSpaceInformation())
+                    ps.simplifyMax(path)
+                    if len(path.getStates()) > 2:
+                        ps.smoothBSpline(path, 2)
+                    else:
+                        path.interpolate(int(path.length() / 0.1))
+                        # ps.smoothBSpline(path, 4)
+                    cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * path.length()
+                    signal.alarm(0)
+                    return True, cost, path
+                else:
+                    signal.alarm(0)
+                    return False, None, None
+
+        elif self.motion_planner == 'rvg': 
+            obj = shapely_polygon_to_rvg_polygon(self.rrt_obj_poly)
+            boundary = rvg.polygon([
+                rvg.vertex(BOUNDARY[0, 0], BOUNDARY[1, 0]),
+                rvg.vertex(BOUNDARY[0, 1], BOUNDARY[1, 0]),
+                rvg.vertex(BOUNDARY[0, 1], BOUNDARY[1, 1]),
+                rvg.vertex(BOUNDARY[0, 0], BOUNDARY[1, 1]),
+                ], False)
+            obstacles = [
+                shapely_polygon_to_rvg_polygon(obs)
+                for obs in obstacles
+            ]
+            start = rvg.vertex(obj_pose[0], obj_pose[1], 0, 2 * np.pi, obj_pose[2], 2 * np.pi, True)
+            goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
+            vg = rvg.visibility_graph(obj, boundary, obstacles, 18, True, True, True, False)
+            path = vg.shortestPath(start, goal)
+            if len(path) == 0:
                 return False, None, None
+            else:
+                cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * vg.getPathLength() 
+                return True, cost, path
+        else:
+            raise ValueError(f"Motion planner {self.motion_planner} not supported")
+
 
     def is_state_equal(self, poses1: np.ndarray, poses2: np.ndarray) -> bool:
         diff = poses1[:, 2] - poses2[:, 2]
