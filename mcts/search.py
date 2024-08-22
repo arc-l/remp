@@ -458,19 +458,20 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
         start = rvg.vertex(obj_pose[0], obj_pose[1], 0, 2 * np.pi, obj_pose[2], 2 * np.pi, True)
         goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
 
-        # fig, ax = plt.subplots()
-        # ax.plot(boundary.getX(), boundary.getY(), '-o', color="darkcyan")
-        # for obs in obstacles:
-        #     ax.plot(obs.getX(), obs.getY(), '-o', color="darkcyan")
+        fig, ax = plt.subplots()
+        ax.plot(boundary.getX(), boundary.getY(), '-o', color="darkcyan")
+        for obs in obstacles:
+            ax.plot(obs.getX(), obs.getY(), '-o', color="darkcyan")
         
-        # robot = obj.moveToCopy(start.getX(), start.getY(), start.getTheta())
-        # ax.plot(robot.getX(), robot.getY(), '-o', color="deeppink")
-        # robot = obj.moveToCopy(goal.getX(), goal.getY(), goal.getTheta())
-        # ax.plot(robot.getX(), robot.getY(), '-o', color="darkviolet")
-        # plt.show()
-        # plt.close(fig)
+        robot = obj.moveToCopy(start.getX(), start.getY(), start.getTheta())
+        ax.plot(robot.getX(), robot.getY(), '-o', color="deeppink")
+        robot = obj.moveToCopy(goal.getX(), goal.getY(), goal.getTheta())
+        ax.plot(robot.getX(), robot.getY(), '-o', color="darkviolet")
+        plt.show()
+        plt.close(fig)
 
         vg = rvg.visibility_graph(obj, boundary, obstacles, 18, 1, True, True, True, False)
+        # vg.draw("test.png", False, False, True, True)
         path = vg.shortestPath(start, goal)
         if len(path) == 0:
             return False, None, None
