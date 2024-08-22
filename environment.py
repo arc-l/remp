@@ -457,14 +457,14 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--method", action="store", choices=["mcts", "greedy"], help="search method to use")
-    parser.add_argument("--motion_planning", action="store", choices=["rrt", "rvg"], default='rrt', help="search method to use")
+    parser.add_argument("--motion_planner", action="store", choices=["rrt", "rvg"], default='rrt', help="search method to use")
     parser.add_argument("--case", action="store", required=True, type=str, help="case to run")
     parser.add_argument("--log", action="store", required=False, type=str, help="where to log")
     parser.add_argument("--gui", action="store_true", required=False, help="show gui")
     args = parser.parse_args()
     search_method = args.method
     case_name = args.case
-    motion_planning = args.motion_planning
+    motion_planner = args.motion_planner
     if args.gui:
         gui = True
     else:
@@ -472,10 +472,10 @@ if __name__ == "__main__":
 
 
     if search_method == "mcts":
-        pool = multiprocessing.Pool(processes=multiprocessing.cpu_count() - 1)
-        print(f"case {case_name}, multiprocessing {pool._processes} processes are used! Using motion planner {motion_planning}")
+        pool = multiprocessing.Pool(processes=1)
+        print(f"case {case_name}, multiprocessing {pool._processes} processes are used! Using motion planner {motion_planner}")
         atexit.register(partial(clean_pool, pool))
-        solver = MCTS(40, pool, motion_planner=motion_planning)
+        solver = MCTS(40, pool, motion_planner=motion_planner)
     elif search_method == "greedy":
         solver = Greedy_Solver()
 
@@ -549,10 +549,10 @@ if __name__ == "__main__":
             e_t = time.time()
             assert solved
             poses = []
-            if motion_planning == "rvg":
+            if motion_planner == "rvg":
                 for state in path:
                     poses.append((state.getX(), state.getY(), state.getTheta()))
-            elif motion_planning == "rrt":
+            elif motion_planner == "rrt":
                 for state in path.getStates():
                     poses.append((state.getX(), state.getY(), state.getYaw()))
             ori_poly = shapely_rotate_translate_with_center(
