@@ -471,7 +471,7 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
         # plt.close(fig)
 
         try:
-            vg = rvg.visibility_graph(obj, boundary, obstacles, 18, 1, True, True, True, False, verbose=True)
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=18, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
         except RuntimeError as e:
             print("Visibility graph failed")
 
@@ -861,16 +861,24 @@ class MCTS:
             pbar.set_postfix(iterations=itr)                
 
         if self.pool:
-            # print()
-            # print('waiting for the sim pool to finish', len(pool_results))
-            for result, node in pool_results:
-                wait_time = time.time()
-                while not result.ready() and time.time() - wait_time < 1:
-                    time.sleep(0.1)
-                reward = result.get()
-                reward = max(0, reward - self.base_reward)
-                self._backpropagate(node, reward)
-            # print('waiting for the expand pool to finish', counter.value)
+            print()
+            while len(pool_results) > 0:
+                print('waiting for the sim pool to finish', len(pool_results))
+                i = 0
+                while i < len(pool_results):
+                    result, node = pool_results[i]
+                    wait_time = time.time()
+                    print("waiting")
+                    while not result.ready() and time.time() - wait_time < 1:
+                        print("sleeping")
+                        time.sleep(0.1)
+                    if result.ready():
+                        reward = result.get()
+                        reward = max(0, reward - self.base_reward)
+                        self._backpropagate(node, reward)
+                        pool_results.pop(i)
+                    i+=1
+            print('waiting for the expand pool to finish', counter.value)
             while counter.value != 0:
                 time.sleep(0.1)
                 if time.time() - start_time > self.time_limit + 2:
@@ -1316,7 +1324,7 @@ class MCTS:
             start = rvg.vertex(obj_pose[0], obj_pose[1], 0, 2 * np.pi, obj_pose[2], 2 * np.pi, True)
             goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
 
-            vg = rvg.visibility_graph(obj, boundary, obstacles, 18, 1, True, True, True, False)
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=18, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
             path = vg.shortestPath(start, goal)
             if len(path) == 0:
                 return False, None, None
