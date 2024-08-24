@@ -472,10 +472,10 @@ if __name__ == "__main__":
 
 
     if search_method == "mcts":
-        pool = multiprocessing.Pool(processes=8)
+        pool = multiprocessing.Pool(processes=24)
         print(f"case {case_name}, multiprocessing {pool._processes} processes are used! Using motion planner {motion_planner}")
         atexit.register(partial(clean_pool, pool))
-        solver = MCTS(10, pool, motion_planner=motion_planner)
+        solver = MCTS(5, pool, motion_planner=motion_planner)
     elif search_method == "greedy":
         solver = Greedy_Solver()
 

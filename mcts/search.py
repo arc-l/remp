@@ -1,4 +1,5 @@
 import multiprocessing
+import os
 import rvg
 import matplotlib.pyplot as plt
 import random
@@ -29,6 +30,7 @@ signal.signal(signal.SIGALRM, handler)
 
 manager = multiprocessing.Manager()
 counter = manager.Value("i", 0)
+pids = manager.list()
 lock = manager.Lock()
 
 
@@ -472,6 +474,7 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
 
         try:
             vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=18, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
+            vg.setWeight(0.5, 0.5)
         except RuntimeError as e:
             print("Visibility graph failed")
 
@@ -481,10 +484,12 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
             print("Shortest path failed")
 
         if len(path) == 0:
+            # print("No path found, return")
             return False, None, None
         else:
             try:
                 cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * vg.getPathLength() 
+                # print("Cost found, return")
             except RuntimeError as e:
                 print("Get path length failed")
             return True, cost, path
@@ -519,6 +524,9 @@ def simulate_pool(
         with lock:
             counter.value -= 1
         return goal_reward - cost_so_far
+
+    with lock:
+        pids.append(os.getpid())
 
     obj_polys = obj_polys.copy()
     obj_poses = obj_poses.copy()
@@ -583,7 +591,10 @@ def simulate_pool(
                                 reward = reward * (0.9 ** (depth))
                                 with lock:
                                     counter.value -= 1
-                                return reward * simulate_goal_reward_scale
+                                    print("Lock -1", counter.value)
+                                    print("Pid = ", os.getpid())
+                                print("Return reward", reward * simulate_goal_reward_scale)
+                                return reward * simulate_goal_reward_scale, os.getpid()
                             if action_type == 1:
                                 obj_at_goal_list[obj_id] = one_obj_push_goal_reward
                             else:
@@ -644,7 +655,10 @@ def simulate_pool(
                             reward = reward * (0.9 ** (depth))
                             with lock:
                                 counter.value -= 1
-                            return reward * simulate_goal_reward_scale
+                                print("Lock -1", counter.value)
+                                print("Pid = ", os.getpid())
+                            print("Return reward", reward * simulate_goal_reward_scale)
+                            return reward * simulate_goal_reward_scale, os.getpid()
                         if is_obj_at_goal(action_goal_pose, goal_poses[obj_id]):
                             if action_type == 1:
                                 obj_at_goal_list[obj_id] = one_obj_push_goal_reward
@@ -668,7 +682,10 @@ def simulate_pool(
             break
     with lock:
         counter.value -= 1
-    return reward * simulate_goal_reward_scale
+        print("Lock -1", counter.value)
+        print("Pid = ", os.getpid())
+    print("Return reward", reward * simulate_goal_reward_scale)
+    return reward * simulate_goal_reward_scale, os.getpid()
 
 
 class MCTS:
@@ -702,6 +719,7 @@ class MCTS:
         """Search for the best action sequence.
         The order of the objects should not change"""
 
+        print("Main thread PID = ", os.getpid())
         self.goal_poses = obj_goal_poses
         self.obj_action_types = obj_action_types
         self.obj_num = len(obj_polys)
@@ -774,7 +792,7 @@ class MCTS:
         # e_t = time.time()
         # print(f"init time: {e_t - s_t:.3f}")
 
-        pbar = tqdm(total=self.time_limit, ncols=70, bar_format='{l_bar}{bar}{n:.1f}/{total:.1f} {postfix}')
+        pbar = tqdm(total=self.time_limit, ncols=70, bar_format='{l_bar}{bar}{n:.1f}/{total:.1f} {postfix}', disable=True)
         start_time = time.time()
         prev_time = time.time()
         duration = 0
@@ -790,6 +808,8 @@ class MCTS:
                     self._backpropagate_virtual_visits(node)
                     with lock:
                         counter.value += 1
+                        print("counter value", counter.value)
+                        print("Pid = ", os.getpid())
                     result = self.pool.apply_async(
                         simulate_pool,
                         args=(
@@ -821,7 +841,9 @@ class MCTS:
                         for pi in reversed(range(len(pool_results))):
                             result, pool_node = pool_results[pi]
                             if result.ready():
-                                reward = result.get()
+                                reward, pid = result.get()
+                                with lock:
+                                    pids.remove(pid)
                                 reward = max(0, reward - self.base_reward)
                                 self._backpropagate(pool_node, reward)
                                 del pool_results[pi]
@@ -868,15 +890,18 @@ class MCTS:
                 while i < len(pool_results):
                     result, node = pool_results[i]
                     wait_time = time.time()
-                    print("waiting")
+                    print("waiting", i, " Pid = ", os.getpid())
+                    print("pids = ", pids)
                     while not result.ready() and time.time() - wait_time < 1:
-                        print("sleeping")
+                        print("sleeping", i, " Pid = ", os.getpid())
                         time.sleep(0.1)
                     if result.ready():
-                        reward = result.get()
+                        reward, pid = result.get()
+                        with lock:
+                            pids.remove(pid)
                         reward = max(0, reward - self.base_reward)
                         self._backpropagate(node, reward)
-                        pool_results.pop(i)
+                        del pool_results[i]
                     i+=1
             print('waiting for the expand pool to finish', counter.value)
             while counter.value != 0:
@@ -1325,6 +1350,7 @@ class MCTS:
             goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
 
             vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=18, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
+            vg.setWeight(0.5, 0.5)
             path = vg.shortestPath(start, goal)
             if len(path) == 0:
                 return False, None, None
