@@ -473,7 +473,7 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
         # plt.close(fig)
 
         try:
-            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=False, numThreads=1, incremental=False, verbose=False)
             vg.setWeight(0.5, 0.5)
         except RuntimeError as e:
             print("Visibility graph failed")
@@ -1363,7 +1363,7 @@ class MCTS:
             start = rvg.vertex(obj_pose[0], obj_pose[1], 0, 2 * np.pi, obj_pose[2], 2 * np.pi, True)
             goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
 
-            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=False, numThreads=1, incremental=False, verbose=False)
             vg.setWeight(0.5, 0.5)
             path = vg.shortestPath(start, goal)
             if len(path) == 0:

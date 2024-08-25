@@ -472,7 +472,7 @@ if __name__ == "__main__":
 
 
     if search_method == "mcts":
-        pool = multiprocessing.Pool(processes=24)
+        pool = multiprocessing.Pool(processes=1)
         print(f"case {case_name}, multiprocessing {pool._processes} processes are used! Using motion planner {motion_planner}")
         atexit.register(partial(clean_pool, pool))
         solver = MCTS(5, pool, motion_planner=motion_planner)
@@ -494,7 +494,7 @@ if __name__ == "__main__":
     obj_polys_at_goal = []
     for poly, pose, goal_pose in zip(obj_polys_list, obj_start_poses, obj_goal_poses):
         poly = Polygon(poly)
-        poly = poly.buffer(0.004, join_style=2)  # enlarge the polygon a bit, make the drag easier
+        poly = poly.buffer(0.01, join_style=2)  # enlarge the polygon a bit, make the drag easier
         poly_goal = shapely_rotate_translate_with_center(
             poly, goal_pose[0], goal_pose[1], goal_pose[2], 0, 0
         )
