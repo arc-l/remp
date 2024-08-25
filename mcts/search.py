@@ -30,7 +30,7 @@ signal.signal(signal.SIGALRM, handler)
 
 manager = multiprocessing.Manager()
 counter = manager.Value("i", 0)
-pids = manager.list()
+# pids = manager.list()
 lock = manager.Lock()
 
 
@@ -473,7 +473,7 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
         # plt.close(fig)
 
         try:
-            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=18, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
             vg.setWeight(0.5, 0.5)
         except RuntimeError as e:
             print("Visibility graph failed")
@@ -525,9 +525,12 @@ def simulate_pool(
             counter.value -= 1
         return goal_reward - cost_so_far
 
-    with lock:
-        pids.append(os.getpid())
+    #TODO: deal with this too
+    # with lock:
+    #     pids.append(os.getpid())
 
+    #TODO: Remove all the checking printouts
+    # print(f"check 0 submitted, Pid = {os.getpid()}")
     obj_polys = obj_polys.copy()
     obj_poses = obj_poses.copy()
     cost_so_far = cost_so_far
@@ -541,19 +544,24 @@ def simulate_pool(
             obj_at_goal_list[i] *= one_obj_goal_reward
     reward = np.sum(obj_at_goal_list) - cost_so_far
     max_reward = reward
+    # print(f"check 1, Pid = {os.getpid()}")
 
     for _ in range(max_rollout_steps):
         if len(obj_id_list) == 0:
+            # print(f"check 4 break, Pid = {os.getpid()}")
             break
 
         is_valid_action = False
 
+        # print(f"check 7 get in for loop, Pid = {os.getpid()}")
         # priotize goal
         # if random.random() < 0.7:
         if random.random() < max(-0.106 + 0.231 * depth - 0.013 * depth **2, 0.2): 
+            # print(f"check 7 priotize goal, Pid = {os.getpid()}")
             test_obj_id_list = obj_id_list.copy()
             random.shuffle(test_obj_id_list)
             for obj_id in test_obj_id_list:
+                # print(f"check 9 obj_id = {obj_id}, Pid = {os.getpid()}")
                 if obj_at_goal_list[obj_id] > 0:
                     continue
                 else:
@@ -591,10 +599,7 @@ def simulate_pool(
                                 reward = reward * (0.9 ** (depth))
                                 with lock:
                                     counter.value -= 1
-                                    print("Lock -1", counter.value)
-                                    print("Pid = ", os.getpid())
-                                print("Return reward", reward * simulate_goal_reward_scale)
-                                return reward * simulate_goal_reward_scale, os.getpid()
+                                return reward * simulate_goal_reward_scale
                             if action_type == 1:
                                 obj_at_goal_list[obj_id] = one_obj_push_goal_reward
                             else:
@@ -610,6 +615,7 @@ def simulate_pool(
         
         # sample an object to move
         if not is_valid_action:    
+            # print(f"check 8 sample an object to move, Pid = {os.getpid()}")
             obj_id = random.choice(obj_id_list)
             curr_pose = obj_poses[obj_id]
             goal_pose = goal_poses[obj_id]
@@ -622,7 +628,11 @@ def simulate_pool(
                 sample_next_poses(curr_pose, goal_pose, grid_actions[obj_id], obj_inner_radius[obj_id], obj_outer_radius[obj_id], obj_center_offsets[obj_id], obj_long_angles[obj_id], is_simulate=True, grid_sample_half=grid_sample_half)
             )
             random.shuffle(action_goal_poses)
+            # print(f"check 8 shuffled action_goal_poses, Pid = {os.getpid()}")
+            cnt = 0
             for action_goal_pose in action_goal_poses:
+                cnt+=1
+                # print(f"check 8 cnt={cnt}/len{len(action_goal_poses)}, Pid = {os.getpid()}")
                 if is_obj_at_goal(curr_pose, action_goal_pose):
                     continue
                 # check if the action is valid
@@ -635,12 +645,15 @@ def simulate_pool(
                         cost = get_pick_place_cost(curr_pose, action_goal_pose)
                         is_valid_action = True
                     else:
+                        # print(f"check 8 solve_drag_rrt_pool, cnt = {cnt}/len{len(action_goal_poses)}, solving, Pid = {os.getpid()}")
                         solved, cost, path = solve_drag_rrt_pool(
                             obj_polys, obj_poses, Action(action_type, obj_id, action_goal_pose), boundary_box, motion_planner=motion_planner
                         )
+                        # print(f"check 8 solve_drag_rrt_pool, cnt = {cnt}/len{len(action_goal_poses)}, solved, Pid = {os.getpid()}")
                         if solved:
                             is_valid_action = True
 
+                    # print(f"check 8 is_valid_action={is_valid_action}, Pid = {os.getpid()}")
                     # execute the action
                     if is_valid_action:
                         obj_polys[obj_id] = new_obj_poly
@@ -655,10 +668,7 @@ def simulate_pool(
                             reward = reward * (0.9 ** (depth))
                             with lock:
                                 counter.value -= 1
-                                print("Lock -1", counter.value)
-                                print("Pid = ", os.getpid())
-                            print("Return reward", reward * simulate_goal_reward_scale)
-                            return reward * simulate_goal_reward_scale, os.getpid()
+                            return reward * simulate_goal_reward_scale
                         if is_obj_at_goal(action_goal_pose, goal_poses[obj_id]):
                             if action_type == 1:
                                 obj_at_goal_list[obj_id] = one_obj_push_goal_reward
@@ -672,20 +682,22 @@ def simulate_pool(
                         reward = max(max_reward * 0.5, new_reward)
                         reward = reward * (0.9 ** (depth))
                         obj_id_list = list(range(obj_num))
+                        # print(f"check 8 break, Pid = {os.getpid()}")
                         break
 
             # do not sample this object again
             obj_id_list.remove(obj_id)
+            # print(f"check 8 removed {obj_id}, Pid = {os.getpid()}")
 
+        # print(f"check 2 for loop, Pid = {os.getpid()}")
         if depth >= max_depth:
             # reward = reward * 0.5
+            # print(f"check 3 breaking out, Pid = {os.getpid()}")
             break
+    # print(f"check 6, Pid = {os.getpid()}")
     with lock:
         counter.value -= 1
-        print("Lock -1", counter.value)
-        print("Pid = ", os.getpid())
-    print("Return reward", reward * simulate_goal_reward_scale)
-    return reward * simulate_goal_reward_scale, os.getpid()
+    return reward * simulate_goal_reward_scale
 
 
 class MCTS:
@@ -719,7 +731,6 @@ class MCTS:
         """Search for the best action sequence.
         The order of the objects should not change"""
 
-        print("Main thread PID = ", os.getpid())
         self.goal_poses = obj_goal_poses
         self.obj_action_types = obj_action_types
         self.obj_num = len(obj_polys)
@@ -792,7 +803,7 @@ class MCTS:
         # e_t = time.time()
         # print(f"init time: {e_t - s_t:.3f}")
 
-        pbar = tqdm(total=self.time_limit, ncols=70, bar_format='{l_bar}{bar}{n:.1f}/{total:.1f} {postfix}', disable=True)
+        pbar = tqdm(total=self.time_limit, ncols=70, bar_format='{l_bar}{bar}{n:.1f}/{total:.1f} {postfix}', disable=False)
         start_time = time.time()
         prev_time = time.time()
         duration = 0
@@ -808,8 +819,6 @@ class MCTS:
                     self._backpropagate_virtual_visits(node)
                     with lock:
                         counter.value += 1
-                        print("counter value", counter.value)
-                        print("Pid = ", os.getpid())
                     result = self.pool.apply_async(
                         simulate_pool,
                         args=(
@@ -841,13 +850,17 @@ class MCTS:
                         for pi in reversed(range(len(pool_results))):
                             result, pool_node = pool_results[pi]
                             if result.ready():
-                                reward, pid = result.get()
-                                with lock:
-                                    pids.remove(pid)
+                                reward = result.get()
+                                # with lock:
+                                    # print("pids = ", pids)
+                                    # print("Pid removed", pid)
+                                    # pids.remove(pid)
+                                    # print("pids = ", pids)
                                 reward = max(0, reward - self.base_reward)
                                 self._backpropagate(pool_node, reward)
                                 del pool_results[pi]
-                        if counter.value <= self.num_processes and len(pool_results) <= 1.5 * self.num_processes:
+                        if counter.value <= self.num_processes and len(pool_results) < self.num_processes:
+                        # if counter.value <= self.num_processes and len(pool_results) <= 1.5 * self.num_processes:
                         # if counter.value <= self.num_processes or len(pool_results) == 0:
                             break
                         else:  # wait for a while
@@ -885,25 +898,26 @@ class MCTS:
         if self.pool:
             print()
             while len(pool_results) > 0:
-                print('waiting for the sim pool to finish', len(pool_results))
+                # print('waiting for the sim pool to finish', len(pool_results))
+                # print("counter.value = ", counter.value)
                 i = 0
                 while i < len(pool_results):
                     result, node = pool_results[i]
                     wait_time = time.time()
-                    print("waiting", i, " Pid = ", os.getpid())
-                    print("pids = ", pids)
+                    # print("waiting", i, " Pid = ", os.getpid())
+                    # print("pids = ", pids)
                     while not result.ready() and time.time() - wait_time < 1:
-                        print("sleeping", i, " Pid = ", os.getpid())
+                        # print("sleeping", i)
                         time.sleep(0.1)
                     if result.ready():
-                        reward, pid = result.get()
-                        with lock:
-                            pids.remove(pid)
+                        reward = result.get()
+                        # with lock:
+                        #     pids.remove(pid)
                         reward = max(0, reward - self.base_reward)
                         self._backpropagate(node, reward)
                         del pool_results[i]
                     i+=1
-            print('waiting for the expand pool to finish', counter.value)
+            # print('waiting for the expand pool to finish', counter.value)
             while counter.value != 0:
                 time.sleep(0.1)
                 if time.time() - start_time > self.time_limit + 2:
@@ -1349,7 +1363,7 @@ class MCTS:
             start = rvg.vertex(obj_pose[0], obj_pose[1], 0, 2 * np.pi, obj_pose[2], 2 * np.pi, True)
             goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
 
-            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=18, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=True, numThreads=1, incremental=False, verbose=False)
             vg.setWeight(0.5, 0.5)
             path = vg.shortestPath(start, goal)
             if len(path) == 0:
