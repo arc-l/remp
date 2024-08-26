@@ -22,7 +22,8 @@ from utils import (
     shapely_translate,
     shapely_rotate_translate_with_center,
     extrude_polygon,
-    plot_polygons_with_label
+    plot_polygons_with_label,
+    signed_lesser_distance
 )
 from mcts.node import Action
 from mcts.search import MCTS
@@ -472,10 +473,10 @@ if __name__ == "__main__":
 
 
     if search_method == "mcts":
-        pool = multiprocessing.Pool(processes=1)
+        pool = multiprocessing.Pool(processes=24)
         print(f"case {case_name}, multiprocessing {pool._processes} processes are used! Using motion planner {motion_planner}")
         atexit.register(partial(clean_pool, pool))
-        solver = MCTS(5, pool, motion_planner=motion_planner)
+        solver = MCTS(10, pool, motion_planner=motion_planner)
     elif search_method == "greedy":
         solver = Greedy_Solver()
 
@@ -494,7 +495,7 @@ if __name__ == "__main__":
     obj_polys_at_goal = []
     for poly, pose, goal_pose in zip(obj_polys_list, obj_start_poses, obj_goal_poses):
         poly = Polygon(poly)
-        poly = poly.buffer(0.01, join_style=2)  # enlarge the polygon a bit, make the drag easier
+        poly = poly.buffer(0.004, join_style=2)  # enlarge the polygon a bit, make the drag easier
         poly_goal = shapely_rotate_translate_with_center(
             poly, goal_pose[0], goal_pose[1], goal_pose[2], 0, 0
         )
@@ -563,6 +564,7 @@ if __name__ == "__main__":
                 obj_start_poses[obj_id][0],
                 obj_start_poses[obj_id][1],
             )
+            print("solved poses = ", poses)
             plot_polygons_with_drag(obj_polys, ori_poly, poses, f"logs/step-{step}")
             obj_polys[obj_id] = shapely_rotate_translate_with_center(
                 obj_polys[obj_id], xoff, yoff, angle, obj_start_poses[obj_id][0], obj_start_poses[obj_id][1]

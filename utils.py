@@ -342,3 +342,10 @@ def shapely_polygon_to_rvg_polygon(polygon: Polygon):
     ]
     rvg_polygon = rvg.polygon(rvg_polygon, False)
     return rvg_polygon
+
+
+def signed_lesser_distance(theta1, theta2):
+    delta_theta = (theta2 - theta1) % (2 * math.pi)
+    if delta_theta > math.pi:
+        delta_theta -= 2 * math.pi
+    return delta_theta

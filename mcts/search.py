@@ -44,12 +44,15 @@ def is_obj_at_goal(obj_pose: np.ndarray, goal_pose: np.ndarray) -> bool:
     )
 
 
-def get_pick_place_cost(obj_pose: np.ndarray, goal_pose: np.ndarray) -> float:
+def get_pick_place_cost(obj_pose: np.ndarray, goal_pose: np.ndarray, motion_planner:str = "rrt") -> float:
     """Calculate the cost of pick-and-place action"""
     trans_dist = math.sqrt((obj_pose[0] - goal_pose[0]) ** 2 + (obj_pose[1] - goal_pose[1]) ** 2)
     rot_dist = abs(obj_pose[2] - goal_pose[2])
-    if rot_dist > math.pi:
-        rot_dist = 2 * math.pi - rot_dist
+    if motion_planner == 'rvg':
+        rot_dist = (rot_dist + math.pi) % (2 * math.pi)
+    elif motion_planner == 'rrt':
+        if rot_dist > math.pi:
+            rot_dist = 2 * math.pi - rot_dist
     assert rot_dist >= 0
     # cost = PICK_PLACE_BASE_COST + PICK_PLACE_DIST_SCALE * (trans_dist * TRANS_WEIGHT + rot_dist * ROT_WEIGHT)
     cost = max(PICK_PLACE_BASE_COST + PICK_PLACE_DIST_SCALE * (trans_dist * TRANS_WEIGHT), PICK_PLACE_BASE_COST + PICK_PLACE_DIST_SCALE * (rot_dist * ROT_WEIGHT))
@@ -67,6 +70,7 @@ def sample_next_poses(
     long_angle: float,
     is_simulate: bool = False,
     grid_sample_half: bool = False,
+    motion_planner: str = 'rrt',
 ) -> np.ndarray:
     """Sample next poses for the object, all poses are within the boundary"""
     at_goal = is_obj_at_goal(curr_pose, goal_pose)
@@ -87,6 +91,8 @@ def sample_next_poses(
     new_pos[:, 1] = np.clip(new_pos[:, 1], BOUNDARY[1, 0] + inner_radius, BOUNDARY[1, 1] - inner_radius)
     new_pos = np.repeat(new_pos, num_rot_samples, axis=0)
     angles = np.random.uniform(low=-np.pi, high=np.pi, size=(len(new_pos), 1))
+    if motion_planner == 'rvg':
+        angles += np.pi
     new_pose_goal = np.hstack((new_pos, angles))
 
     # sample poses within the boundary
@@ -101,11 +107,13 @@ def sample_next_poses(
     )
     new_pos = np.repeat(new_pos, num_rot_samples, axis=0)
     angles = np.random.uniform(low=-np.pi, high=np.pi, size=(len(new_pos), 1))
+    if motion_planner == 'rvg':
+        angles += np.pi
     new_pose_rand = np.hstack((new_pos, angles))
 
     # sample poses as a grid over the boundary
     if is_simulate:
-        new_pose_grid = sample_grid_actions(inner_radius, outer_radius, center_offset, long_angle)
+        new_pose_grid = sample_grid_actions(inner_radius, outer_radius, center_offset, long_angle, motion_planner=motion_planner)
         if grid_sample_half:
             new_pose_grid = new_pose_grid[np.random.choice(len(new_pose_grid), len(new_pose_grid) // 4, replace=False)]
         else:
@@ -132,6 +140,8 @@ def sample_next_poses(
         new_pos[:, 1] = np.clip(new_pos[:, 1], BOUNDARY[1, 0] + inner_radius, BOUNDARY[1, 1] - inner_radius)
         new_pos = np.repeat(new_pos, num_rot_samples, axis=0)
         angles = np.random.uniform(low=-np.pi, high=np.pi, size=(len(new_pos), 1))
+        if motion_planner == 'rvg':
+            angles += np.pi
         new_pose_curr = np.hstack((new_pos, angles))
         next_poses = np.vstack((new_pose_goal, new_pose_curr, new_pose_rand, new_pose_grid))
     else:
@@ -151,10 +161,11 @@ def sample_single_obj_actions(
     center_offset: float,
     long_angle: float,
     grid_sample_half: bool = False,
+    motion_planner: str = 'rrt',
 ) -> List[Action]:
     """Get all possible actions for the object"""
     actions = []
-    next_poses = sample_next_poses(curr_pose, goal_pose, grid_action, obj_inner_radius, obj_outer_radius, center_offset, long_angle, grid_sample_half)
+    next_poses = sample_next_poses(curr_pose, goal_pose, grid_action, obj_inner_radius, obj_outer_radius, center_offset, long_angle, grid_sample_half, motion_planner=motion_planner)
     for next_pose in next_poses:
         actions.append(Action(action_type, obj_id, next_pose))
 
@@ -172,6 +183,7 @@ def sample_actions(
     obj_center_offsets: List[float],
     obj_long_angles: List[float],
     grid_sample_half: bool = False,
+    motion_planner: str = 'rrt',
 ) -> List[Action]:
     """Get all possible actions for the node, which is a list of actions for each object"""
     actions = []
@@ -186,7 +198,7 @@ def sample_actions(
             goal_actions.append(Action(action_type, obj_id, goal_pose))
 
         sub_actions = sample_single_obj_actions(
-            curr_pose, goal_pose, grid_actions[obj_id], obj_id, action_type, obj_inner_radii[obj_id], obj_outer_radii[obj_id], obj_center_offsets[obj_id], obj_long_angles[obj_id], grid_sample_half
+            curr_pose, goal_pose, grid_actions[obj_id], obj_id, action_type, obj_inner_radii[obj_id], obj_outer_radii[obj_id], obj_center_offsets[obj_id], obj_long_angles[obj_id], grid_sample_half, motion_planner=motion_planner
         )
         if len(sub_actions) == 0:
             continue
@@ -201,7 +213,7 @@ def sample_actions(
     return actions
 
 
-def sample_grid_actions(short_radius: float, long_radius: float, center_offset: float, long_angle: float) -> np.ndarray:
+def sample_grid_actions(short_radius: float, long_radius: float, center_offset: float, long_angle: float, motion_planner:str = "rrt") -> np.ndarray:
     """Sample poses as a grid over the boundary"""
     rot_half = (short_radius / long_radius > 0.9)
     max_nx, max_ny = 8, 5
@@ -223,7 +235,7 @@ def sample_grid_actions(short_radius: float, long_radius: float, center_offset: 
     new_pos[:, 0] = new_pos[:, 0] - center_offset[0]
     new_pos[:, 1] = new_pos[:, 1] - center_offset[1]
     angles = np.array([-long_angle])
-    angles = (angles + np.pi) % (2 * np.pi) - np.pi
+    angles = (angles + np.pi) % (2 * np.pi) - np.pi if motion_planner == "rrt" else angles % (2 * np.pi)
     angles = np.tile(angles, len(new_pos))
     new_pose_grid_hori = np.c_[new_pos, angles]
     new_pose_grid = new_pose_grid_hori
@@ -244,7 +256,7 @@ def sample_grid_actions(short_radius: float, long_radius: float, center_offset: 
         new_pos[:, 0] = new_pos[:, 0] + center_offset[1]
         new_pos[:, 1] = new_pos[:, 1] - center_offset[0]
         angles = np.array([-long_angle + np.pi / 2])
-        angles = (angles + np.pi) % (2 * np.pi) - np.pi
+        angles = (angles + np.pi) % (2 * np.pi) - np.pi if motion_planner == "rrt" else angles % (2 * np.pi)
         angles = np.tile(angles, len(new_pos))
         new_pose_grid_vert = np.c_[new_pos, angles]
         new_pose_grid = np.vstack((new_pose_grid, new_pose_grid_vert))
@@ -259,6 +271,7 @@ def try_actions_pool(
     boundary_box,
     goal_poses: np.ndarray,
     cost_so_far: float,
+    motion_planner: str='rrt',
 ):
 
     child_nodes = []
@@ -275,11 +288,11 @@ def try_actions_pool(
         )
         if new_obj_poly.within(boundary_box) and not shapely_collision_check(new_obj_poly, obs_polys):
             if action.type == 0:
-                cost = get_pick_place_cost(obj_pose, action.goal_pose)
+                cost = get_pick_place_cost(obj_pose, action.goal_pose, motion_planner=motion_planner)
                 is_valid_action = True
             else:
                 solved, cost, _ = solve_drag_rrt_pool(
-                    obj_polys, obj_poses, Action(action.type, action.obj_id, action.goal_pose), boundary_box, optimal=True
+                    obj_polys, obj_poses, Action(action.type, action.obj_id, action.goal_pose), boundary_box, optimal=True, motion_planner=motion_planner
                 )
                 if solved:
                     is_valid_action = True
@@ -303,7 +316,7 @@ def try_actions_pool(
     return child_nodes
 
 def try_actions_pool_map(args):
-    actions, obj_polys, obj_poses, boundary_box, goal_poses, cost_so_far = args
+    actions, obj_polys, obj_poses, boundary_box, goal_poses, cost_so_far, motion_planner = args
 
     child_nodes = []
     for action in actions:
@@ -319,11 +332,11 @@ def try_actions_pool_map(args):
         )
         if new_obj_poly.within(boundary_box) and not shapely_collision_check(new_obj_poly, obs_polys):
             if action.type == 0:
-                cost = get_pick_place_cost(obj_pose, action.goal_pose)
+                cost = get_pick_place_cost(obj_pose, action.goal_pose, motion_planner=motion_planner)
                 is_valid_action = True
             else:
                 solved, cost, _ = solve_drag_rrt_pool(
-                    obj_polys, obj_poses, Action(action.type, action.obj_id, action.goal_pose), boundary_box, optimal=True
+                    obj_polys, obj_poses, Action(action.type, action.obj_id, action.goal_pose), boundary_box, optimal=True, motion_planner=motion_planner
                 )
                 if solved:
                     is_valid_action = True
@@ -473,13 +486,13 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
         # plt.close(fig)
 
         try:
-            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=False, numThreads=1, incremental=False, verbose=False)
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=False, fineApprox=False, numThreads=1, incremental=False, verbose=False)
             vg.setWeight(0.5, 0.5)
         except RuntimeError as e:
             print("Visibility graph failed")
 
         try:
-            path = vg.shortestPath(start, goal)
+            path = vg.shortestPath(start, goal, 10)
         except RuntimeError as e:
             print("Shortest path failed")
 
@@ -488,7 +501,7 @@ def solve_drag_rrt_pool(obj_polys: List[Polygon], obj_poses: np.ndarray, action:
             return False, None, None
         else:
             try:
-                cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * vg.getPathLength() 
+                cost = PICK_DRAG_BASE_COST + PICK_DRAG_DIST_SCALE * vg.getPathLength() # + ROT_WEIGHT * vg.getTotalRotation()
                 # print("Cost found, return")
             except RuntimeError as e:
                 print("Get path length failed")
@@ -525,12 +538,6 @@ def simulate_pool(
             counter.value -= 1
         return goal_reward - cost_so_far
 
-    #TODO: deal with this too
-    # with lock:
-    #     pids.append(os.getpid())
-
-    #TODO: Remove all the checking printouts
-    # print(f"check 0 submitted, Pid = {os.getpid()}")
     obj_polys = obj_polys.copy()
     obj_poses = obj_poses.copy()
     cost_so_far = cost_so_far
@@ -544,11 +551,9 @@ def simulate_pool(
             obj_at_goal_list[i] *= one_obj_goal_reward
     reward = np.sum(obj_at_goal_list) - cost_so_far
     max_reward = reward
-    # print(f"check 1, Pid = {os.getpid()}")
 
     for _ in range(max_rollout_steps):
         if len(obj_id_list) == 0:
-            # print(f"check 4 break, Pid = {os.getpid()}")
             break
 
         is_valid_action = False
@@ -577,7 +582,7 @@ def simulate_pool(
                     )
                     if new_obj_poly.within(boundary_box) and not shapely_collision_check(new_obj_poly, obs_polys):
                         if action_type == 0:
-                            cost = get_pick_place_cost(curr_pose, action_goal_pose)
+                            cost = get_pick_place_cost(curr_pose, action_goal_pose, motion_planner=motion_planner)
                             is_valid_action = True
                         else:
                             solved, cost, path = solve_drag_rrt_pool(
@@ -625,7 +630,7 @@ def simulate_pool(
 
             # select an action
             action_goal_poses = list(
-                sample_next_poses(curr_pose, goal_pose, grid_actions[obj_id], obj_inner_radius[obj_id], obj_outer_radius[obj_id], obj_center_offsets[obj_id], obj_long_angles[obj_id], is_simulate=True, grid_sample_half=grid_sample_half)
+                sample_next_poses(curr_pose, goal_pose, grid_actions[obj_id], obj_inner_radius[obj_id], obj_outer_radius[obj_id], obj_center_offsets[obj_id], obj_long_angles[obj_id], is_simulate=True, grid_sample_half=grid_sample_half, motion_planner=motion_planner)
             )
             random.shuffle(action_goal_poses)
             # print(f"check 8 shuffled action_goal_poses, Pid = {os.getpid()}")
@@ -642,7 +647,7 @@ def simulate_pool(
                 )
                 if new_obj_poly.within(boundary_box) and not shapely_collision_check(new_obj_poly, obs_polys):
                     if action_type == 0:
-                        cost = get_pick_place_cost(curr_pose, action_goal_pose)
+                        cost = get_pick_place_cost(curr_pose, action_goal_pose, motion_planner=motion_planner)
                         is_valid_action = True
                     else:
                         # print(f"check 8 solve_drag_rrt_pool, cnt = {cnt}/len{len(action_goal_poses)}, solving, Pid = {os.getpid()}")
@@ -715,8 +720,10 @@ class MCTS:
         self.boundary_box = box(BOUNDARY[0, 0], BOUNDARY[1, 0], BOUNDARY[0, 1], BOUNDARY[1, 1])
 
         if self.motion_planner == 'rrt':
+            print("Using Motion Planner: RRT")
             self.init_rrt()
         elif self.motion_planner == 'rvg':
+            print("Using Motion Planner: RVG")
             pass
         else:
             raise ValueError(f"Motion planner {self.motion_planner} not supported")
@@ -732,6 +739,9 @@ class MCTS:
         The order of the objects should not change"""
 
         self.goal_poses = obj_goal_poses
+        # if(self.motion_planner == 'rvg'):
+            # change rotation to [0, 2*pi]
+            # self.goal_poses[:, 2] += np.pi
         self.obj_action_types = obj_action_types
         self.obj_num = len(obj_polys)
         self.max_depth = round(self.obj_num * 2) + 2
@@ -764,7 +774,7 @@ class MCTS:
         # pre-compute grid actions
         self.grid_actions = []
         for radius, large_radius, center_offset, long_angle in zip(self.obj_inner_radius, self.obj_outer_radius, self.obj_center_offset_radii, self.obj_long_axis_angles):
-            self.grid_actions.append(sample_grid_actions(radius, large_radius, center_offset, long_angle))
+            self.grid_actions.append(sample_grid_actions(radius, large_radius, center_offset, long_angle, motion_planner=self.motion_planner))
         # records
         self.depth_record = 1
         self.max_N_1 = 500
@@ -782,12 +792,13 @@ class MCTS:
             self.obj_outer_radius,
             self.obj_center_offset_radii,
             self.obj_long_axis_angles,
+            motion_planner=self.motion_planner
         )
         # s_t = time.time()
         actions_batches = [self.root.untried_actions[i:i+3] for i in range(0, len(self.root.untried_actions), 3)]
         results = self.pool.map(
             try_actions_pool_map,
-            [(actions, obj_polys, self.root.obj_poses, self.boundary_box, self.goal_poses, self.root.cost_so_far)
+            [(actions, obj_polys, self.root.obj_poses, self.boundary_box, self.goal_poses, self.root.cost_so_far, self.motion_planner)
             for actions in actions_batches]
         )
         self.root.untried_actions = []
@@ -1000,6 +1011,7 @@ class MCTS:
                 self.obj_center_offset_radii,
                 self.obj_long_axis_angles,
                 self.grid_sample_half,
+                motion_planner=self.motion_planner
             )
         # cutoff, limit the branching factor, TODO: remove this if performance is not good
         # if len(node.children) > 150:
@@ -1048,6 +1060,7 @@ class MCTS:
                                     self.boundary_box,
                                     self.goal_poses,
                                     node.cost_so_far,
+                                    self.motion_planner
                                 ),
                             )
                             node.pool_results.append(result)
@@ -1089,7 +1102,7 @@ class MCTS:
                 )
                 if new_obj_poly.within(self.boundary_box) and not shapely_collision_check(new_obj_poly, obs_polys):
                     if action.type == 0:
-                        cost = get_pick_place_cost(obj_pose, action.goal_pose)
+                        cost = get_pick_place_cost(obj_pose, action.goal_pose, motion_planner=self.motion_planner)
                         is_valid_action = True
                     else:
                         solved, cost, _ = self.solve_drag_rrt(obj_polys, obj_poses, action)
@@ -1145,7 +1158,7 @@ class MCTS:
             # select an action
             is_valid_action = False
             action_goal_poses = list(
-                sample_next_poses(curr_pose, goal_pose, self.grid_actions[obj_id], self.obj_inner_radius[obj_id], self.obj_outer_radius[obj_id], is_simulate=True)
+                sample_next_poses(curr_pose, goal_pose, self.grid_actions[obj_id], self.obj_inner_radius[obj_id], self.obj_outer_radius[obj_id], is_simulate=True, motion_planner=self.motion_planner)
             )
             # piroritize the goal pose
             if random.random() < 0.2:
@@ -1166,7 +1179,7 @@ class MCTS:
                 )
                 if new_obj_poly.within(self.boundary_box) and not shapely_collision_check(new_obj_poly, obs_polys):
                     if action_type == 0:
-                        cost = get_pick_place_cost(curr_pose, action_goal_pose)
+                        cost = get_pick_place_cost(curr_pose, action_goal_pose, motion_planner = self.motion_planner)
                         is_valid_action = True
                     else:
                         solved, cost, path = self.solve_drag_rrt(
@@ -1363,9 +1376,11 @@ class MCTS:
             start = rvg.vertex(obj_pose[0], obj_pose[1], 0, 2 * np.pi, obj_pose[2], 2 * np.pi, True)
             goal = rvg.vertex(goal_pose[0], goal_pose[1], 0, 2 * np.pi, goal_pose[2], 2 * np.pi, True)
 
-            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=False, numThreads=1, incremental=False, verbose=False)
+            timer_start = time.time()
+            vg = rvg.visibility_graph(robot=obj, border = boundary, obstacles = obstacles, resolution=36, considerSymmetry=True, hashWithTheta=True, simplifiedGeometry=False, fineApprox=False, numThreads=1, incremental=False, verbose=False)
             vg.setWeight(0.5, 0.5)
-            path = vg.shortestPath(start, goal)
+            path = vg.shortestPath(start, goal, 10)
+            print(f"RVG time: {time.time() - timer_start:.3f}")
             if len(path) == 0:
                 return False, None, None
             else:
